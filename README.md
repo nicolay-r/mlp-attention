@@ -1,4 +1,4 @@
-## Multilayer Perceptron Attention
+## Multi-Layer Perceptron Attention
 ![](https://img.shields.io/badge/Python-2.7-brightgreen.svg)
 ![](https://img.shields.io/badge/TensorFlow-1.4.1-yellowgreen.svg)
 
