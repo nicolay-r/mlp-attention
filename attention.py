@@ -1,12 +1,14 @@
 import tensorflow as tf
-from config import AttentionYatianColing2016Config
+
+from config import MultiLayerPerceptronAttentionConfig
 from utils import get_k_layer_logits
 
 
-class AttentionYatianColing2016(object):
+
+class MultiLayerPerceptronAttention(object):
     """
     Authors: Yatian Shen, Xuanjing Huang
-    https://www.aclweb.org/anthology/C16-1238
+    Paper: https://www.aclweb.org/anthology/C16-1238
     """
 
     H_W_we = "H_W_we"
@@ -15,15 +17,23 @@ class AttentionYatianColing2016(object):
     H_b_a = "H_b_a"
 
     I_x = "I_x"
+    I_pos = "I_pos"
+    I_dist_obj = "I_dist_obj"
+    I_dist_subj = "I_dist_subj"
     I_entities = "I_e"
 
-    def __init__(self, cfg, batch_size, terms_per_context, term_embedding_size):
-        assert(isinstance(cfg, AttentionYatianColing2016Config))
+    def __init__(self, cfg, batch_size, terms_per_context,
+                 term_embedding_size,
+                 pos_embedding_size,
+                 dist_embedding_size):
+        assert(isinstance(cfg, MultiLayerPerceptronAttentionConfig))
         self.__cfg = cfg
 
         self.__batch_size = batch_size
         self.__terms_per_context = terms_per_context
-        self.__term_embedding_size = term_embedding_size
+        self.__term_embedding_size = term_embedding_size + \
+                                     pos_embedding_size + \
+                                     2 * dist_embedding_size
 
         self.__input = {}
         self.__hidden = {}
@@ -36,36 +46,96 @@ class AttentionYatianColing2016(object):
     def AttentionEmbeddingSize(self):
         return self.__cfg.EntitiesPerContext * self.__term_embedding_size
 
-    def set_input(self, x, entities):
+    def set_input(self, x, pos, dist_obj, dist_subj, keys):
         self.__input[self.I_x] = x
-        self.__input[self.I_entities] = entities
+        self.__input[self.I_pos] = pos
+        self.__input[self.I_dist_subj] = dist_subj
+        self.__input[self.I_dist_obj] = dist_obj
+        self.__input[self.I_entities] = keys
 
     def init_input(self):
-        self.__input[self.I_x] = tf.placeholder(dtype=tf.int32,
-                                                shape=[self.__batch_size, self.__terms_per_context])
-        self.__input[self.I_entities] = tf.placeholder(dtype=tf.int32,
-                                                       shape=[self.__batch_size, self.__cfg.EntitiesPerContext])
+        self.__input[self.I_x] = tf.compat.v1.placeholder(
+            dtype=tf.int32,
+            shape=[self.__batch_size, self.__terms_per_context])
+        self.__input[self.I_pos] = tf.compat.v1.placeholder(
+            dtype=tf.int32,
+            shape=[self.__batch_size, self.__terms_per_context])
+        self.__input[self.I_dist_obj] = tf.compat.v1.placeholder(
+            dtype=tf.int32,
+            shape=[self.__batch_size, self.__terms_per_context])
+        self.__input[self.I_dist_subj] = tf.compat.v1.placeholder(
+            dtype=tf.int32,
+            shape=[self.__batch_size, self.__terms_per_context])
+        self.__input[self.I_entities] = tf.compat.v1.placeholder(
+            dtype=tf.int32,
+            shape=[self.__batch_size, self.__cfg.EntitiesPerContext])
 
     def init_hidden(self):
-        self.__hidden[self.H_W_we] = tf.Variable(tf.random_normal([2 * self.__term_embedding_size, self.__cfg.HiddenSize]),
+        self.__hidden[self.H_W_we] = tf.Variable(tf.random.normal([2 * self.__term_embedding_size, self.__cfg.HiddenSize]),
                                                  dtype=tf.float32)
-        self.__hidden[self.H_b_we] = tf.Variable(tf.random_normal([self.__cfg.HiddenSize]),
+        self.__hidden[self.H_b_we] = tf.Variable(tf.random.normal([self.__cfg.HiddenSize]),
                                                  dtype=tf.float32)
-        self.__hidden[self.H_W_a] = tf.Variable(tf.random_normal([self.__cfg.HiddenSize, 1]),
+        self.__hidden[self.H_W_a] = tf.Variable(tf.random.normal([self.__cfg.HiddenSize, 1]),
                                                 dtype=tf.float32)
-        self.__hidden[self.H_b_a] = tf.Variable(tf.random_normal([1]),
+        self.__hidden[self.H_b_a] = tf.Variable(tf.random.normal([1]),
                                                 dtype=tf.float32)
 
-    def init_body(self, term_embedding):
+    def init_body(self, term_embedding, pos_embedding, dist_embedding):
         assert(isinstance(term_embedding, tf.Tensor))
+        assert(isinstance(pos_embedding, tf.Tensor))
+        assert(isinstance(dist_embedding, tf.Tensor))
 
-        # embedded_terms: [batch_size, terms_per_context, embedding_size]
-        embedded_terms = tf.nn.embedding_lookup(term_embedding, self.__input[self.I_x])
+        embedded_terms = tf.concat(
+            [tf.nn.embedding_lookup(params=term_embedding, ids=self.__input[self.I_x]),
+             tf.nn.embedding_lookup(params=pos_embedding, ids=self.__input[self.I_pos]),
+             tf.nn.embedding_lookup(params=dist_embedding, ids=self.__input[self.I_dist_subj]),
+             tf.nn.embedding_lookup(params=dist_embedding, ids=self.__input[self.I_dist_obj])],
+            axis=-1)
 
         with tf.name_scope("attention"):
 
-            def iter_by_entities(entities, handler):
-                # entities: [batch_size, entities]
+            def filter_batch_elements(elements, inds, handler):
+                """
+                elements:  [batch_size, terms_per_context]
+                """
+                batch_size = elements.shape[0]
+
+                filtered = tf.TensorArray(
+                    dtype=tf.int32,
+                    name="context_iter",
+                    size=batch_size,
+                    infer_shape=False,
+                    dynamic_size=True)
+
+                _, _, _, filtered = tf.while_loop(
+                    lambda i, *_: tf.less(i, batch_size),
+                    handler,
+                    (0, elements, inds, filtered))
+
+                return filtered.stack()
+
+            def select_entity_related_elements(i, elements, inds, filtered):
+                """
+                elements: [batch, terms_per_context]
+                inds: [batch, terms_per_context]
+                """
+
+                row_elements = tf.squeeze(tf.gather(elements, [i], axis=0))
+                row_inds = tf.squeeze(tf.gather(inds, [i], axis=0))
+
+                result = tf.gather(row_elements, row_inds)   # row: [entities_per_context]
+
+                return (i + 1,
+                        elements,
+                        inds,
+                        filtered.write(i, tf.squeeze(result)))
+
+            def iter_by_entities(entities, e_pos, e_dist_obj, e_dist_subj, handler):
+                """
+                entities:  [batch_size, entities]
+                e_pos:     [batch_size, terms_per_context]
+                e_dists:   [batch_size, terms_per_context]
+                """
 
                 att_sum_array = tf.TensorArray(
                     dtype=tf.float32,
@@ -81,23 +151,46 @@ class AttentionYatianColing2016(object):
                     infer_shape=False,
                     dynamic_size=True)
 
-                _, _, att_sum, att_weights = tf.while_loop(
+                _, _, _, _, _, att_sum, att_weights = tf.while_loop(
                     lambda i, *_: tf.less(i, self.__cfg.EntitiesPerContext),
                     handler,
-                    (0, entities, att_sum_array, att_weights_array))
+                    (0, entities, e_pos, e_dist_obj, e_dist_subj, att_sum_array, att_weights_array))
 
-                return att_sum.stack(), \
-                       att_weights.stack()
+                return att_sum.stack(), att_weights.stack()
 
-            def process_entity(i, entities, att_sum, att_weights):
-                # entities: [batch_size, entities_per_context]
+            def process_entity(i, entities, e_pos, e_dist_obj, e_dist_subj, att_sum, att_weights):
+                """
+                entities: [batch_size, entities_per_context]
+                """
 
-                e = tf.gather(entities, [i], axis=1)                       # [batch_size, 1] -- term positions
-                e = tf.tile(e, [1, self.__terms_per_context])              # [batch_size, terms_per_context]
-                e = tf.nn.embedding_lookup(term_embedding, e)              # [batch_size, terms_per_context, embedding_size]
+                e_term_index = tf.gather(entities, [i], axis=1)                         # [batch_size, 1] -- term positions
+                e_term_indices = tf.tile(e_term_index, [1, self.__terms_per_context])   # [batch_size, terms_per_context]
+
+                e_pos_indices = filter_batch_elements(
+                    elements=e_pos,
+                    inds=e_term_indices,
+                    handler=select_entity_related_elements)
+
+                e_dist_obj_indices = filter_batch_elements(
+                    elements=e_dist_obj,
+                    inds=e_term_indices,
+                    handler=select_entity_related_elements)
+
+                e_dist_subj_indices = filter_batch_elements(
+                    elements=e_dist_subj,
+                    inds=e_term_indices,
+                    handler=select_entity_related_elements)
+
+                e = tf.concat(
+                    [tf.nn.embedding_lookup(term_embedding, e_term_indices),            # [batch_size, terms_per_context, embedding_size]
+                     tf.nn.embedding_lookup(pos_embedding, e_pos_indices),
+                     tf.nn.embedding_lookup(dist_embedding, e_dist_obj_indices),
+                     tf.nn.embedding_lookup(dist_embedding, e_dist_subj_indices)],
+                    axis=-1)                                                            # [batch_size, terms_per_context, embedding_size]
 
                 merged = tf.concat([embedded_terms, e], axis=-1)
-                merged = tf.reshape(merged, [self.__batch_size * self.__terms_per_context, 2 * self.__term_embedding_size])
+                merged = tf.reshape(merged, [self.__batch_size * self.__terms_per_context,
+                                             2 * self.__term_embedding_size])
 
                 u = get_k_layer_logits(g=merged,
                                        W=[self.__hidden[self.H_W_we], self.__hidden[self.H_W_a]],
@@ -118,14 +211,19 @@ class AttentionYatianColing2016(object):
                 w_sum = tf.reduce_sum(w_embedding, axis=1)             # [batch_size, embedding_size]
 
                 return (i + 1,
-                        entities,
+                        entities, e_pos, e_dist_obj, e_dist_subj,
                         att_sum.write(i, w_sum),
                         att_weights.write(i, tf.reshape(alphas, [self.__batch_size, self.__terms_per_context])))
 
-            att_sum, att_weights = iter_by_entities(self.__input[self.I_entities], process_entity)
+            att_sum, att_weights = iter_by_entities(
+                entities=self.__input[self.I_entities],
+                e_pos=self.__input[self.I_pos],
+                e_dist_obj=self.__input[self.I_dist_obj],
+                e_dist_subj=self.__input[self.I_dist_subj],
+                handler=process_entity)
 
-            # att_e: [entity_per_context, batch_size, term_embedding_size]
-            # att_w: [entity_per_context, batch_size, terms_per_context]
+            # att_sum: [entity_per_context, batch_size, term_embedding_size]
+            # att_weights: [entity_per_context, batch_size, terms_per_context]
 
             att_sum = tf.transpose(att_sum, perm=[1, 0, 2])  # [batch_size, entity_per_context, term_embedding_size]
             att_sum = tf.reshape(att_sum, shape=[self.__batch_size, self.AttentionEmbeddingSize])
