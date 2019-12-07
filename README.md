@@ -2,6 +2,10 @@
 ![](https://img.shields.io/badge/Python-3.6-brightgreen.svg)
 ![](https://img.shields.io/badge/TensorFlow-1.14.0-yellowgreen.svg)
 
+> **UPD December 7rd, 2019:** this attention model becomes a part of 
+[AREkit](https://github.com/nicolay-r/AREkit) framework.
+
+
 This project is an unofficial implementation of MLP attention -- multilayer perceptron 
 attention network, proposed by Yatian Shen and Xuanjing Huang 
 as an application for **Relation Extraction Task**
