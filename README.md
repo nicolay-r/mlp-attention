@@ -34,7 +34,6 @@ This version has been embedded in AREkit-[0.20.3], and become a part of the foll
 [[presentation]](docs/wims_2020_slides.pdf)
     * Rusnachenko Nicolay, Loukachevitch Natalia
     * WIMS-2020
-
 * Studying Attention Models in Sentiment Attitude Extraction Task 
 [[Springer]](https://doi.org/10.1007/978-3-030-51310-8_15) /
 [[arXiv:2006.11605]](https://arxiv.org/abs/2006.11605) /
