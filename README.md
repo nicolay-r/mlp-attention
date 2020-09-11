@@ -1,11 +1,13 @@
-## Multilayer Perceptron Attention [Embedded in AREkit-[0.20.0](https://github.com/nicolay-r/AREkit/blob/0.20.0-nldb-rc/networks/attention/architectures/mlp.py) and later versions]
+# Multilayer Perceptron Attention 
+
+# [Embedded in AREkit-[0.20.0](https://github.com/nicolay-r/AREkit/blob/0.20.0-nldb-rc/networks/attention/architectures/mlp.py) and later versions]
 ![](https://img.shields.io/badge/Python-3.6-brightgreen.svg)
 ![](https://img.shields.io/badge/TensorFlow-1.14.0-yellowgreen.svg)
 
 > **UPD December 7rd, 2019:** this attention model becomes a part of 
-[AREkit](https://github.com/nicolay-r/AREkit) framework (
-[original](https://github.com/nicolay-r/AREkit/blob/0.20.3-wims-rc/contrib/networks/attention/architectures/mlp.py),
-[interactive](https://github.com/nicolay-r/AREkit/blob/0.20.3-wims-rc/contrib/networks/attention/architectures/mlp_interactive.py). 
+[AREkit](https://github.com/nicolay-r/AREkit) framework
+([original](https://github.com/nicolay-r/AREkit/blob/0.20.3-wims-rc/contrib/networks/attention/architectures/mlp.py),
+[interactive](https://github.com/nicolay-r/AREkit/blob/0.20.3-wims-rc/contrib/networks/attention/architectures/mlp_interactive.py)). 
 Please proceed with this framework for an embedded implementation.
 
 This project is an unofficial implementation of MLP attention -- multilayer perceptron 
